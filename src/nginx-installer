@@ -2930,16 +2930,5 @@ class OnlineInstaller(AppBase):
 
 if __name__ == "__main__":
     app = OnlineInstaller()
-    app.setInstallation(appName='online-installer',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/online-installer",downloadUrl="https://dl.leolio.page/test",lastUpdate='2023-11-26',majorVersion=11,minorVersion=26)
-    app.start()
-        if self.check_system_and_user():
-            if not self.parseArgs2():
-                if not self.parseArgs(self.usage()):
-                    self.msg_info()
-        else:
-            self.msg_root_continue()
-
-if __name__ == "__main__":
-    app = OnlineInstaller()
     app.setInstallation(appName='nginx-installer', author='Cloudgen Wong', homepage="https://github.com/cloudgen2/nginx-installer",downloadUrl="https://dl.leolio.page/nginx-installer",lastUpdate='2023-11-26',majorVersion=11,minorVersion=26)
     app.start()
