@@ -756,7 +756,7 @@ class AppBase(object):
                         cmd = "sudo adduser -D -G %s %s" % (group_id, username, username)
                     else:
                         cmd = "adduser -D -G %s %s" % (group_id, username, username)
-                elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+                elif self.is_debian() or self.osVersion().startswith('CentOS'):
                     if self.is_sudo():
                         cmd = "sudo useradd -g %d -u %d -m -s /bin/bash %s" % (group_id, user_id, username)
                     else:
@@ -767,7 +767,7 @@ class AppBase(object):
                         cmd = "sudo adduser -D -G %s -h %s %s" % (username, home, username)
                     else:
                         cmd = "adduser -D -G %s -h %s %s" % (username, home, username)
-                elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+                elif self.is_debian() or self.osVersion().startswith('CentOS'):
                     if self.is_sudo():
                         cmd = "sudo useradd -g %d -u %d -m -d %s -s /bin/bash %s" % (group_id, user_id, home, username)
                     else:
@@ -1111,7 +1111,7 @@ class AppBase(object):
                         self.history_package_exists(package)
                         return True
         if self.update_repository():
-            if self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian'):
+            if self.is_debian():
                 self.history_install_package(package)
                 if self.is_sudo():
                     cmd = "sudo apt install -y %s" % package
@@ -1215,7 +1215,7 @@ class AppBase(object):
                     cmd = "sudo addgroup -g %d %s" % (group_id, groupname)
                 else:
                     cmd = "addgroup -g %d %s" % (group_id, groupname)
-            elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+            elif self.is_debian() or self.osVersion().startswith('CentOS'):
                 if self.is_sudo():
                     cmd = "sudo groupadd -g %d %s" % (group_id, groupname)
                 else:
@@ -1249,6 +1249,9 @@ class AppBase(object):
             contents = file.read()
         
         return "# modified to add ~/.local/bin to PATH" in contents
+
+    def is_debian(self):
+        return self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian') or self.osVersion().startswith('Raspbian')
 
     def is_docker_container(self):
         if not hasattr(self, '__is_container__'):
@@ -1621,6 +1624,16 @@ class AppBase(object):
             self.__python_version__ =  self.__python_version__.split('(')[0].strip()
         return self.__python_version__
 
+    def rc_update(self, package):
+        self.history_check_rc_update()
+        if self.root_or_sudo():
+            rc_cmd = self.which_cmd("rc-update")
+            if rc_cmd != "":
+                if self.sudo_cmd!="":
+                    cmd = 'sudo %s add %s default' % (rc_cmd, packge)
+                else:
+                    cmd = '%s add $s default' % (rc_cmd, package)
+
     def real_path(self, x, curr_path=None):
         if curr_path is None:
             curr_path = self.curPath()
@@ -1695,7 +1708,7 @@ class AppBase(object):
                     cmd = "sudo deluser --remove-home %s" % username
                 else:
                     cmd = "deluser --remove-home %s" % username
-            elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+            elif self.is_debian() or self.osVersion().startswith('CentOS'):
                 if self.is_sudo():
                     cmd = "sudo userdel -r %s" % username
                 else:
@@ -2275,7 +2288,7 @@ class AppBase(object):
             self.__has_repository_updated__ = False
         if self.__has_repository_updated__:
             return True
-        if self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian'):
+        if self.is_debian():
             cmd = "apt update"
         elif self.is_alpine():
             cmd = "apk update"
@@ -2303,13 +2316,15 @@ class AppBase(object):
                 if self.pathexists(path, use_history=True):
                     location = path
                     installed=True
+                    self.cmd_history('# found: %s' % location)
             elif isinstance(path,list):
                 for l in path:
                     if self.pathexists(l, use_history=True):
                         location = l
                         installed=True
+                        self.cmd_history('# found: %s' % location)
         if installed:
-            if self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian'):
+            if self.is_debian():
                 self.history_uninstall_package(package)
                 if self.is_sudo():
                     cmd = "sudo apt purge --auto-remove -y %s" % package
@@ -2319,7 +2334,7 @@ class AppBase(object):
                 self.shell(cmd, ignoreErr=True)
                 installed = True
             elif self.is_alpine():
-                self.history_install_package(package)
+                self.history_uninstall_package(package)
                 if self.is_sudo():
                     cmd = "sudo apk del %s" % package
                 else:
@@ -2881,16 +2896,6 @@ class OnlineInstaller(AppBase):
             self.msg_sudo_not_installed()
         return False
 
-    def rc_update_nginx(self, user="nginx-adm"):
-        self.history_check_rc_update()
-        if self.root_or_sudo():
-            rc_cmd = self.which_cmd("rc-update")
-            if rc_cmd != "":
-                if self.sudo_cmd!="":
-                    cmd = 'sudo %s add nginx default' % (rc_cmd)
-                else:
-                    cmd = '%s add nginx default' % (rc_cmd)
-
     def remove_nginx_adm_sudoer(self, user="nginx-adm"):
         self.history_remove_sudoer()
         target_sudoers="/etc/sudoers.d/1700-%s" % user
@@ -2936,7 +2941,7 @@ class OnlineInstaller(AppBase):
                 result = self.install_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx'])
                 if result:
                     if is_nginx():
-                        self.rc_update_nginx()
+                        self.rc_update_nginx('nginx')
                     self.cmd_history_print()
                     self.msg_install(location='Globally', app="nginx -v", title="INSTALL")
                 return True
@@ -2980,5 +2985,5 @@ class OnlineInstaller(AppBase):
 
 if __name__ == "__main__":
     app = OnlineInstaller()
-    app.setInstallation(appName='nginx-installer', author='Cloudgen Wong', homepage="https://github.com/cloudgen2/nginx-installer",downloadUrl="https://dl.leolio.page/nginx-installer",lastUpdate='2023-11-27',majorVersion=11,minorVersion=27)
+    app.setInstallation(appName='nginx-installer', author='Cloudgen Wong', homepage="https://github.com/cloudgen2/nginx-installer",downloadUrl="https://dl.leolio.page/nginx-installer",lastUpdate='2023-11-28',majorVersion=11,minorVersion=28)
     app.start()
