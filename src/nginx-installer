@@ -2940,7 +2940,7 @@ class OnlineInstaller(AppBase):
             if self.cmd() == "install" or self.cmd() == "update":
                 result = self.install_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx'])
                 if result:
-                    if is_nginx():
+                    if self.is_alpine():
                         self.rc_update_nginx('nginx')
                     self.cmd_history_print()
                     self.msg_install(location='Globally', app="nginx -v", title="INSTALL")
