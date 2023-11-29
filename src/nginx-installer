@@ -539,14 +539,21 @@ class AppBase(object):
             return self.root_or_sudo()
 
     def cmd_history(self,cmd=None):
+        if hasattr(self, "__tick__"):
+            self.__diff_time__ = (datetime.now() - self.__tick__).total_seconds()
+        else:
+            self.__start_time__= datetime.now()
+            self.__diff_time__= 0
+        self.__tick__=datetime.now()
         if not hasattr(self,'__cmd_history_id__'):
             self.__cmd_history_id__=1
         if not hasattr(self,'__cmd_history__'):
-            self.__cmd_history__=["# ====== Command History starting at %s: ======" % self.now()]
+            self.__cmd_history__=["# ====== Command History starting at %s: ======" % self.__tick__]
         if cmd is None:
             return self.__cmd_history__
         else:
             if cmd.startswith("# **"):
+                self.__cmd_history__.append("#    ...( %.3f second )" % self.__diff_time__)
                 self.__cmd_history__.append("# ** %d. %s" % (self.__cmd_history_id__, cmd[5:]))
                 self.__cmd_history_id__ = self.__cmd_history_id__ + 1
             else:
@@ -554,12 +561,22 @@ class AppBase(object):
         return self
 
     def cmd_history_print(self):
+        if hasattr(self, "__tick__"):
+            self.__diff_time__ = (datetime.now() - self.__tick__).total_seconds()
+        else:
+            self.__start_time__= datetime.now()
+            self.__diff_time__= 0
+        self.__cmd_history__.append("#    ...( %.3f second )" % self.__diff_time__)
         history = self.cmd_history()
+        if hasattr(self, "__start_time__"):
+            self.__diff_time__ = (datetime.now() - self.__start_time__).total_seconds()
+        else:
+            self.__diff_time__= 0
         if len(history) == 0:
             self.infoMsg("Command History: Not Available!", "COMMAND HISTORY")
         else:
             history_list = '\n  '.join(history)
-            self.infoMsg("%s\n  # ====== End at %s: ======\n" % ( history_list, self.now()), "COMMAND HISTORY")
+            self.infoMsg("%s\n  # ====== End at %s   ...( %.3f second ) ======\n" % ( history_list, str(self.__tick__),self.__diff_time__), "COMMAND HISTORY")
 
     def appPath(self, path=None):
         if path is not None:
@@ -1201,6 +1218,14 @@ class AppBase(object):
                 self.cmd_history(cmd)
                 self.shell(cmd, ignoreErr=True)
                 installed = True
+            elif self.is_fedora:
+                if self.is_sudo():
+                    cmd = "sudo dnf install -y %s" % package
+                else:
+                    cmd = "dnf install -y %s" % package
+                self.cmd_history(cmd)
+                self.shell(cmd, ignoreErr=True)
+                installed = True
             else:
                 self.msg_not_compatible_os()
             if installed:
@@ -1350,6 +1375,9 @@ class AppBase(object):
             self.__is_container__=os.path.exists('/.dockerenv')
         return self.__is_container__
 
+    def is_fedora(self):
+        return self.osVersion().startswith('Amazon') or self.osVersion().startswith('Fedora')
+
     def is_linux(self):
         return not (self.osVersion()=='windows' or self.osVersion()=='macOS' or self.osVersion().startswith('macOS'))
 
@@ -1407,7 +1435,7 @@ class AppBase(object):
             self.__isSudo__=False
         return self.__isSudo__
 
-    def is_latest(major1, major2, minor1, minor2, patch1=0, patch2=0):
+    def is_latest(self, major1, major2, minor1, minor2, patch1=0, patch2=0):
         # check 1 is latest, 2 as reference
         return major1>major2 or (major1==major2 and minor1>minor2) or (major1==major2 and minor1==minor2 and patch1>patch2)
 
@@ -1660,7 +1688,7 @@ class AppBase(object):
                 if not result:
                     self.cmd_history_print()
                     self.msg_installation_failed()
-                    return True
+                return True
             else:
                 self.selfInstall()
                 return True
@@ -2225,8 +2253,12 @@ class AppBase(object):
         if self.__temp_checked__<1:
             if not self.mkdir(folder):
                 return ""
+        if self.__temp_checked__==0:
+            use_history=True
+        else:
+            use_history=False
         self.__temp_checked__=self.__temp_checked__+1
-        if self.pathexists(folder):
+        if self.pathexists(folder, use_history=use_history):
             return folder
         self.msg_temp_folder_failed(folder)
         return ""
@@ -2428,6 +2460,7 @@ class AppBase(object):
 
     def update_repository(self):
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
+        cmd = ""
         if not self.root_or_sudo():
             return False
         if not hasattr(self,'__has_repository_updated__'):
@@ -2440,6 +2473,8 @@ class AppBase(object):
             cmd = "apk update"
         elif self.osVersion().startswith('CentOS'):
             cmd = "yum check-update"
+        elif self.is_fedora():
+            cmd = "dnf check-update"
         else:
             self.msg_not_compatible_os()
         if cmd != "":
@@ -2493,6 +2528,14 @@ class AppBase(object):
                     cmd = "sudo yum remove -y %s" % package
                 else:
                     cmd = "yum remove -y %s" % package
+                self.cmd_history(cmd)
+                self.shell(cmd, ignoreErr=True)
+                installed = True
+            elif self.is_fedora():
+                if self.is_sudo():
+                    cmd = "sudo dnf remove -y %s" % package
+                else:
+                    cmd = "dnf remove -y %s" % package
                 self.cmd_history(cmd)
                 self.shell(cmd, ignoreErr=True)
                 installed = True
