@@ -373,7 +373,25 @@ class AppBase(object):
             else:
                 self.__alpine_version__=''
         return self.__alpine_version__
-        
+
+    def add_alpine_nginx_adm_sudoer(self, usr="nginx-adm"):
+        self.history_check_copy_sudoers()
+        if self.sudo_cmd() != "":
+            s_cmd = self.which_rc_service()
+            n_cmd = self.which_nginx()
+            lines = [
+                self.nopw(usr, "%s nginx reload" % s_cmd),
+                self.nopw(usr, "%s nginx restart" % s_cmd),
+                self.nopw(usr, "%s nginx start" % s_cmd),
+                self.nopw(usr, "%s nginx status" % s_cmd),
+                self.nopw(usr, "%s nginx stop" % s_cmd),
+                self.nopw(usr, n_cmd),
+                ""
+            ]
+            self.add_sudoers("1700-%s" % usr,'\n'.join(lines))
+        else:
+            self.msg_sudo_not_installed()
+        return False
 
     def add_apk_community(self):
         comm="https://dl-cdn.alpinelinux.org/alpine/%s/community" % self.alpine_version()
@@ -412,6 +430,43 @@ class AppBase(object):
         with self.open(self.bashrc(), "a") as file:
             file.write("\n".join(modification_lines))
         self.chmod_x(self.bashrc())        
+
+    def add_nginx_adm_sudoer(self, usr="nginx-adm"):
+        self.history_check_copy_sudoers()
+        if self.sudo_cmd() != "":
+            s_cmd = self.which_systemctl()
+            j_cmd = self.which_journalctl()
+            n_cmd = self.which_nginx()
+            lines = [
+                self.nopw(usr, "%s -f -u nginx" % j_cmd),
+                self.nopw(usr, "%s -f -u nginx" %  j_cmd),
+                self.nopw(usr, "%s -u nginx" % j_cmd),
+                self.nopw(usr, "%s reload nginx" % s_cmd),
+                self.nopw(usr, "%s restart nginx" % s_cmd),
+                self.nopw(usr, "%s start nginx" % s_cmd),
+                self.nopw(usr, "%s status nginx" % s_cmd),
+                self.nopw(usr, "%s stop nginx" % s_cmd),
+                self.nopw(usr, n_cmd),
+                ""
+            ]
+            self.add_sudoers("1700-%s" % usr,'\n'.join(lines))
+            return True
+        else:
+            self.msg_sudo_not_installed()
+            return False
+
+    def add_sudoers(self, fname, content):
+        target_sudoers="/etc/sudoers.d/%s" % fname
+        if not self.pathexists(target_sudoers):
+            tempSudoer = "%s/%s-%s" % (self.tempFolder(),fname, self.timestamp())
+            file = self.open(tempSudoer,'w')
+            file.write(content)
+            file.close()
+            self.cp(tempSudoer, target_sudoers, useSudo=self.is_sudo())
+            self.history_remove_temp()
+            self.removeFile(tempSudoer)
+            return True
+        return True
 
     def add_zshenv_modification(self):
         # Append the modification lines to .bashrc file
@@ -473,6 +528,15 @@ class AppBase(object):
                 else:
                     self.__app_exec__='./' + self.appName()
         return self.__app_exec__
+
+    def check_system_and_user(self):
+        # is_linux() Check if not windows and not macOS
+        if self.allowLinuxOnly() and not self.is_linux():
+            self.msg_linux_only()
+            return False
+        else:
+            # root_or_sudo() Check user is root or has sudo privilege
+            return self.root_or_sudo()
 
     def cmd_history(self,cmd=None):
         if not hasattr(self,'__cmd_history_id__'):
@@ -1152,6 +1216,12 @@ class AppBase(object):
                     installed = False
         return installed
 
+    def install_python_package(self, package=None):
+        self.history_install_package('jupyter')
+        cmd = 'pip3 install --upgrade --break-system-packages %s' % package
+        self.cmd_history(cmd)
+        self.shell(cmd,ignoreErr=True)
+
     def installedGlobal(self):
         return self.pathexists(self.globalInstallPath(0)) or self.pathexists(self.globalInstallPath(1)) 
 
@@ -1162,6 +1232,28 @@ class AppBase(object):
         if self.isCmd() or self.isGitBash():
             return self.path_to_dos(which) == self.path_to_dos(self.localInstallPath())
         return which == self.localInstallPath()
+
+    def install_nginx_admin(self):
+        # root_or_sudo() Check user is root or has sudo privilege and assuming linux
+        if not self.root_or_sudo():
+            return False
+        if self.install_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx']):
+            if self.is_alpine():
+                self.add_apk_community()
+                self.install_package('sudo')
+            self.create_user(username="nginx-adm", user_id=1700, group_id=1700, home="/opt/nginx-adm")
+            self.history_change_ownership_of_folder()
+            self.chown("/etc/nginx", "nginx-adm:nginx-adm", useSudo=self.is_sudo())
+            self.history_create_soft_link()
+            if self.is_alpine():
+                self.ln("/etc/nginx/http.d", "/opt/nginx-adm/", useSudo=self.is_sudo())
+                result = self.add_alpine_nginx_adm_sudoer()
+            else:
+                self.ln("/etc/nginx/sites-available", "/opt/nginx-adm/", useSudo=self.is_sudo())
+                self.ln("/etc/nginx/sites-enabled", "/opt/nginx-adm/", useSudo=self.is_sudo())
+                result = self.add_nginx_adm_sudoer()
+            return result
+        return True
 
     def install_target_global(self, this, useSudo=False):
         if self.targetApp() != '':
@@ -1315,6 +1407,10 @@ class AppBase(object):
             self.__isSudo__=False
         return self.__isSudo__
 
+    def is_latest(major1, major2, minor1, minor2, patch1=0, patch2=0):
+        # check 1 is latest, 2 as reference
+        return major1>major2 or (major1==major2 and minor1>minor2) or (major1==major2 and minor1==minor2 and patch1>patch2)
+
     def latest_version(self):
         useRequest = False
         try:
@@ -1333,8 +1429,7 @@ class AppBase(object):
                             if 'minorVersion' in token:
                                 minorVersion = int(token.split('=')[1])
                 self.__latest_version__="%d.%d" % (majorVersion,minorVersion)
-                if majorVersion > self.majorVersion() or (majorVersion == self.majorVersion() and minorVersion> self.minorVersion()):
-                    self.__need_update__=True
+                self.__need_update__=self.is_latest(majorVersion, self.majorVersion(), minorVersion, self.minorVersion())
         except:
             self.msg_no_server()
         if not hasattr(self,'__latest_version__'):
@@ -1469,6 +1564,9 @@ class AppBase(object):
             self.__need_update__=False
             self.latest_version()
         return self.__need_update__
+
+    def nopw(self, user, cmd):
+        return "%s ALL=(ALL) NOPASSWD: %s" % (user, cmd)
 
     def now(self):
         return str(datetime.now())
@@ -1630,7 +1728,7 @@ class AppBase(object):
             rc_cmd = self.which_cmd("rc-update")
             if rc_cmd != "":
                 if self.sudo_cmd!="":
-                    cmd = 'sudo %s add %s default' % (rc_cmd, packge)
+                    cmd = 'sudo %s add %s default' % (rc_cmd, package)
                 else:
                     cmd = '%s add $s default' % (rc_cmd, package)
 
@@ -1716,6 +1814,13 @@ class AppBase(object):
             self.history_remove_user(username)
             self.cmd_history(cmd)
             self.shell(cmd, ignoreErr=True)
+
+    def remove_nginx_adm_sudoer(self, usr="nginx-adm"):
+        self.history_remove_sudoer()
+        target_sudoers="/etc/sudoers.d/1700-%s" % usr
+        self.cmd_history("ls %s" % target_sudoers)
+        if self.pathexists(target_sudoers):
+            self.sudoRemoveFile(target_sudoers)
 
     def root_or_sudo(self):
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
@@ -2181,7 +2286,7 @@ class AppBase(object):
             self.msg_download_not_found(target)
         return result
 
-    def where_cmd(self, cmd):
+    def where_cmd(self, cmd, default=""):
         stdout = ''
         if self.isLinuxShell():
             return self.which_cmd(cmd)
@@ -2196,6 +2301,8 @@ class AppBase(object):
                 for pathlet in split_path:
                     if os.path.exists('%s\\%s' % (pathlet, cmd)):
                         return '%s\\%s' % (pathlet, cmd)
+        if default != "":
+            cmd = default
         return cmd
 
     def which(self):
@@ -2218,17 +2325,21 @@ class AppBase(object):
             if self.pathexists('/usr/bin/which'):
                 return self.which_cmd( self.appName())
 
-    def which_cmd(self, cmd):
+    def which_cmd(self, cmd, default=""):
         stdout = ''
         if self.isCmd() or self.isGitBash():
             return self.where_cmd(cmd)
         elif self.isLinuxShell():
             if os.path.exists('/bin/%s' % cmd):
                 return '/bin/%s' % cmd
+            elif os.path.exists('/sbin/%s' % cmd):
+                return '/sbin/%s' % cmd
             elif os.path.exists('/usr/bin/%s' % cmd):
                 return '/usr/bin/%s' % cmd
             elif os.path.exists('/usr/bin/local/%s' % cmd):
                 return '/usr/bin/local/%s' % cmd
+            elif os.path.exists('/usr/sbin/%s' % cmd):
+                return '/usr/sbin/%s' % cmd
             elif os.path.exists('/home/%s/.local/bin/%s' % (self.username(), cmd)):
                 return '/home/%s/.local/bin/%s' % (self.username(), cmd)
             elif os.path.exists('/usr/bin/which'):
@@ -2242,7 +2353,35 @@ class AppBase(object):
                 for pathlet in split_path:
                     if os.path.exists('%s/%s' % (pathlet, cmd)):
                         return '%s/%s' % (pathlet, cmd)
+        if default!="":
+            cmd=default
         return cmd
+
+    def which_journalctl(self):
+        return self.which_cmd('journalctl', '/usr/bin/journalctl')
+
+    def which_nginx(self):
+        return self.which_cmd('nginx', '/usr/sbin/nginx')
+
+    def which_rc_service(self):
+        return self.which_cmd('rc-service', '/sbin/rc-service')
+
+    def which_systemctl(self):
+        return self.which_cmd('systemctl','/usr/bin/systemctl')
+
+    def which_uname(self):
+        return self.which_cmd('uname', '/usr/bin/uname')
+
+    def ubuntu_version(self):
+        if not hasattr(self,'__ubuntu_version__'):
+            if self.osVersion().startswith("Ubuntu"):
+                version=self.osVersion().split(' ')
+                length=len(version)
+                if length>1:
+                    self.__ubuntu_version__=version[length - 1]
+            else:
+                self.__ubuntu_version__=''
+        return self.__ubuntu_version__
 
     def uname(self, switch, ignoreErr=True):
         stderr = ''
@@ -2250,8 +2389,12 @@ class AppBase(object):
         command = 'uname %s' % switch
         if self.isLinuxShell():
             uname = self.which_cmd('uname')
-            stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
+            command = '%s %s' % (uname, switch)
+            if uname != '':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            else:
+                return False, 'uname not found'
         if self.isGitBash():
             winpty = self.where_cmd('winpty.exe')
             uname = self.where_cmd('uname.exe')
@@ -2266,8 +2409,11 @@ class AppBase(object):
         else:
             # Assume /bin/sh as default shell
             uname = self.which_cmd('uname')
-            stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
+            if uname != '':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            else:
+                return False, 'uname not found'
         if stderr != "" and not ignoreErr:
             self.msg_error(command, stderr)
             return False, stderr
@@ -2300,7 +2446,7 @@ class AppBase(object):
             self.history_update_repository()
             self.cmd_history(cmd)
             self.shell(cmd, ignoreErr=True)
-            self.__has_repository_updated__
+            self.__has_repository_updated__=True
             return True
         return False
 
@@ -2357,6 +2503,12 @@ class AppBase(object):
                 self.msg_unintall_global()
                 return False
         return installed
+
+    def uninstall_python_package(self, package=None):
+        self.history_uninstall_package('jupyter')
+        cmd = 'pip3 uninstall --break-system-packages %s' % package
+        self.cmd_history(cmd)
+        self.shell(cmd,ignoreErr=True)
 
     def usage(self, para=None):
         if not hasattr(self,'__para__'):
@@ -2827,114 +2979,8 @@ class AppBase(object):
 
 class OnlineInstaller(AppBase):
 
-    def add_nginx_adm_sudoer(self, user="nginx-adm"):
-        self.history_check_copy_sudoers()
-        if self.sudo_cmd() != "":
-            target_sudoers="/etc/sudoers.d/1700-%s" % user
-            if not self.pathexists(target_sudoers):
-                s_cmd = self.which_cmd("systemctl")
-                j_cmd = self.which_cmd("journalctl")
-                n_cmd = self.which_cmd("nginx")
-                if s_cmd!="" and j_cmd!="" and n_cmd!="":
-                    tempSudoer = "%s/1700-nginx-%s" % (self.tempFolder(), self.timestamp())
-                    content = [
-                        "%s ALL=(ALL) NOPASSWD: %s -f -u nginx" % (user, j_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s -u nginx" % (user, j_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s reload nginx" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s restart nginx" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s start nginx" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s status nginx" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s stop nginx" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s" % (user, n_cmd),
-                        ""
-                    ]
-                    file2 = self.open(tempSudoer,'w')
-                    file2.write("\n".join(content))
-                    file2.close()
-                    self.cp(tempSudoer, target_sudoers, useSudo=self.is_sudo())
-                    self.history_remove_temp()
-                    self.removeFile(tempSudoer)
-                    return True
-                else:
-                    self.msg_not_working_docker()
-                    return False
-            return True
-        else:
-            self.msg_sudo_not_installed()
-        return False
-
-    def add_alpine_nginx_adm_sudoer(self, user="nginx-adm"):
-        self.history_check_copy_sudoers()
-        if self.sudo_cmd() != "":
-            target_sudoers="/etc/sudoers.d/1700-%s" % user
-            if not self.pathexists(target_sudoers):
-                s_cmd = self.which_cmd("rc-service")
-                n_cmd = self.which_cmd("nginx")
-                if s_cmd!="" and n_cmd!="":
-                    tempSudoer = "%s/1700-nginx-%s" % (self.tempFolder(), self.timestamp())
-                    content = [
-                        "%s ALL=(ALL) NOPASSWD: %s nginx reload" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s nginx restart" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s nginx start" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s nginx status" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s nginx stop" % (user, s_cmd),
-                        "%s ALL=(ALL) NOPASSWD: %s" % (user, n_cmd),
-                        ""
-                    ]
-                    file2 = self.open(tempSudoer,'w')
-                    file2.write("\n".join(content))
-                    file2.close()
-                    self.cp(tempSudoer, target_sudoers, useSudo=self.is_sudo())
-                    self.history_remove_temp()
-                    self.removeFile(tempSudoer)
-                    return True
-                else:
-                    self.msg_not_working_docker()
-                    return False
-            return True
-        else:
-            self.msg_sudo_not_installed()
-        return False
-
-    def remove_nginx_adm_sudoer(self, user="nginx-adm"):
-        self.history_remove_sudoer()
-        target_sudoers="/etc/sudoers.d/1700-%s" % user
-        self.cmd_history("ls %s" % target_sudoers)
-        if self.pathexists(target_sudoers):
-            self.sudoRemoveFile(target_sudoers)
-
-    def check_system_and_user(self):
-        # is_linux() Check if not windows and not macOS
-        if self.allowLinuxOnly() and not self.is_linux():
-            self.msg_linux_only()
-            return False
-        else:
-            # root_or_sudo() Check user is root or has sudo privilege
-            return self.root_or_sudo()
-
-    def install_nginx_admin(self):
-        # root_or_sudo() Check user is root or has sudo privilege and assuming linux
-        if not self.root_or_sudo():
-            return False
-        if self.install_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx']):
-            if self.is_alpine():
-                self.add_apk_community()
-                self.install_package('sudo')
-            self.create_user(username="nginx-adm", user_id=1700, group_id=1700, home="/opt/nginx-adm")
-            self.history_change_ownership_of_folder()
-            self.chown("/etc/nginx", "nginx-adm:nginx-adm", useSudo=self.is_sudo())
-            self.history_create_soft_link()
-            if self.is_alpine():
-                self.ln("/etc/nginx/http.d", "/opt/nginx-adm/", useSudo=self.is_sudo())
-                result = self.add_alpine_nginx_adm_sudoer()
-            else:
-                self.ln("/etc/nginx/sites-available", "/opt/nginx-adm/", useSudo=self.is_sudo())
-                self.ln("/etc/nginx/sites-enabled", "/opt/nginx-adm/", useSudo=self.is_sudo())
-                result = self.add_nginx_adm_sudoer()
-            return result
-        return False
-
     def parseArgs2(self):
+        result=False
         if len(sys.argv) == 2:
             self.cmd(sys.argv[1])
             if self.cmd() == "install" or self.cmd() == "update":
@@ -2985,5 +3031,5 @@ class OnlineInstaller(AppBase):
 
 if __name__ == "__main__":
     app = OnlineInstaller()
-    app.setInstallation(appName='nginx-installer', author='Cloudgen Wong', homepage="https://github.com/cloudgen2/nginx-installer",downloadUrl="https://dl.leolio.page/nginx-installer",lastUpdate='2023-11-28',majorVersion=11,minorVersion=28)
+    app.setInstallation(appName='nginx-installer', author='Cloudgen Wong', homepage="https://github.com/cloudgen2/nginx-installer",downloadUrl="https://dl.leolio.page/nginx-installer",lastUpdate='2023-11-29',majorVersion=11,minorVersion=29)
     app.start()
